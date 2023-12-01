@@ -49,6 +49,7 @@ def parse_arguments():
     parser.add_argument('-m', '--mode', required=True, choices=['staging', 'production'], help='API mode: staging or production')
     parser.add_argument('-t', '--time-wait', type=int, required=True, help='Time in milliseconds to wait between API calls')
     parser.add_argument('-b', '--bigcomments-support', action='store_true', help='Support tickets with 50 or more comments')
+    parser.add_argument('-a', '--actor', type=int, required=True, help='Actor ID for checking specific activity')
     parser.add_argument('-n', '--number-to-process', type=int, default=0, help='Number of tickets to process, 0 for all')
     parser.add_argument('-l', '--log-level', choices=['WARNING', 'DEBUG'], default='WARNING', help='Logging level')
     parser.add_argument('-v', '--version', default=SCRIPT_VERSION, help='Version of the script to use')
@@ -143,20 +144,25 @@ def check_activity(fsid, headers, args):
     check_and_adjust_rate_limit(response, args)
 
     activities = response.json().get('activities', [])
-    return any(activity['actor']['id'] == 23000972474 for activity in activities)
+    return any(activity['actor']['id'] == args.actor for activity in activities)
 
 # Function to process and post notes to FreshService - Revised for tracking and logging
 def process_notes(fsid, ticket, headers, args):
     global successful_tickets, total_api_response_time, api_calls_made, errored_tickets, tickets_with_many_comments
     notes = ticket['helpdesk_ticket']['notes']
     
-    if not args.no_skip and len(notes) >= 50:
+    if not args.bigcomments_support and len(notes) >= 50:
         tickets_with_many_comments.append(fsid)
         logging.warning(f"Skipping ticket FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} due to 50 or more comments.")
         return
 
     for note in notes:
-        note_content = note.get('body_html', '')
+        created_at = note.get('created_at', '')
+        support_email = note.get('support_email', '')
+        body_html = note.get('body_html', '')
+
+        # Prepend created_at, support_email, and body_html
+        note_content = f"{created_at} <br>{support_email} <br>{body_html}"
         payload = {"body": note_content, "private": note.get('private', False)}
         post_note_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/{fsid}/notes"
 
@@ -265,4 +271,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
