@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.05
+# Version: 1.06
 ################################################################################
 
 # Import necessary libraries
@@ -23,7 +23,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.05'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.06'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
