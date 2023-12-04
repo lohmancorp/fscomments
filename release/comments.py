@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.07
+# Version: 1.08
 ################################################################################
 
 # Import necessary libraries
@@ -24,7 +24,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.07'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.08'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
@@ -176,20 +176,20 @@ def make_api_request(method, url, headers, data=None, retries=2):
         raise
 
 # Function to show a progress bar in the UI of the shell to monitor progress.
-def show_progress_bar(current, total, bar_length=50):
+def show_progress_bar(current, total):
     """
-    Display a progress bar.
-    :param current: Current progress (number of tickets processed).
-    :param total: Total items to process (total number of tickets).
-    :param bar_length: Length of the progress bar in characters.
+    Displays a progress bar in the console.
+
+    Args:
+        current: Current item number being processed.
+        total: Total number of items to process.
     """
-    progress = float(current) / total
-    arrow = '-' * int(round(progress * bar_length) - 1) + '>'
-    spaces = ' ' * (bar_length - len(arrow))
-
-    sys.stdout.write("\rProgress: [{0}] {1}%".format(arrow + spaces, int(round(progress * 100))))
-    sys.stdout.flush()
-
+    bar_length = 300  # Length of the progress bar in characters
+    progress = current / total
+    block = int(round(bar_length * progress))
+    text = f"\rProgress: [{'#' * block}{'-' * (bar_length - block)}] {int(progress * 100)}% ({current}/{total})\n"
+    sys.stdout.write(text)
+    sys.stdout.flush()  # Ensure the progress bar updates are displayed immediately
 
 # Function to check if comments exist for a ticket
 def check_comments_exist(fsid, headers, args):
@@ -278,9 +278,6 @@ def process_tickets(args, tickets_data):
             print("\nExiting after current ticket.")
             break
 
-        current_ticket_count += 1
-        show_progress_bar(current_ticket_count, total_tickets_to_process)
-
         fdid = ticket['helpdesk_ticket']['display_id']
         filter_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/filter?query=\"fdid:{fdid}\""
         response = make_api_request("GET", filter_url, headers)
@@ -292,26 +289,27 @@ def process_tickets(args, tickets_data):
         if total_found == 0:
             logging.error(f"FDID: {fdid} not found in Fresh Service")
             errored_tickets.append(f"FDID: {fdid} not found in Fresh Service")
-            continue
         elif total_found > 1:
             logging.error(f"Multiple Fresh Service duplicate tickets for FDID: {fdid}")
             errored_tickets.append(f"Multiple Fresh Service duplicate tickets for FDID: {fdid}")
-            continue
-
-        fsid = tickets_response['tickets'][0]['id']
-        logging.info(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
-        print(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
-
-        conversations = get_conversations(fsid, headers, args)
-        actor_involved = check_activity(fsid, headers, args, conversations)
-
-        if not conversations or (actor_involved and not any(conv['user_id'] == args.actor for conv in conversations)):
-            process_notes(fsid, ticket, headers, args)
-            processed_tickets.add(fsid)
         else:
-            logging.info(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
-            print(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
-            skipped_tickets += 1
+            fsid = tickets_response['tickets'][0]['id']
+            logging.info(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
+            print(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
+
+            conversations = get_conversations(fsid, headers, args)
+            actor_involved = check_activity(fsid, headers, args, conversations)
+
+            if not conversations or (actor_involved and not any(conv['user_id'] == args.actor for conv in conversations)):
+                process_notes(fsid, ticket, headers, args)
+                processed_tickets.add(fsid)
+            else:
+                logging.info(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
+                print(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
+                skipped_tickets += 1
+
+        current_ticket_count += 1
+        show_progress_bar(current_ticket_count, total_tickets_to_process)
 
         if interrupted:
             print("\nExiting after current ticket.")
