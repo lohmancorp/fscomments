@@ -2,13 +2,15 @@
 # setup.py is a script to setup comments.py
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.05
+# Version: 1.06
 ################################################################################
 
 import os
 import requests
 import subprocess
 import sys
+import argparse
+from shutil import rmtree
 from dotenv import load_dotenv
 
 def check_python():
@@ -31,20 +33,26 @@ def download_file_from_github(file_url, destination):
     else:
         print(f"Failed to download {destination}")
 
+def user_confirm_default(message, default_value):
+    user_input = input(f"{message} Use default ({default_value})? [y/n]: ").lower()
+    if user_input in ['y', 'yes']:
+        return default_value
+    else:
+        return input("Enter new value: ")
+
 def setup_env_file():
     env_variables = {
         'API_KEY': '',
-        'STAGING_ENDPOINT': '',
-        'PRODUCTION_ENDPOINT': '',
-        'LOG_DIRECTORY': ''
+        'STAGING_ENDPOINT': user_confirm_default("Staging Endpoint", "https://cbportal-fs-sandbox.freshservice.com/api/v2/"),
+        'PRODUCTION_ENDPOINT': user_confirm_default("Production Endpoint", "https://cbportal.freshservice.com/api/v2/"),
+        'LOG_DIRECTORY': user_confirm_default("Log Directory", "./logs/")
     }
 
     if not os.path.isfile('.env'):
         with open('.env', 'w') as file:
-            for key in env_variables:
-                value = input(f"Enter value for {key}: ")
-                file.write(f"{key}=\"{value}\"\n")  # Enclosing the value in quotes
-                print(f"{key} set successfully.")
+            for key, value in env_variables.items():
+                file.write(f"{key}=\"{value}\"\n")
+                print(f"{key} set to {value}.")
     else:
         print(".env file already exists.")
 
@@ -61,10 +69,43 @@ def create_directories():
             print(f"Directory {directory} created.")
     print("All necessary directories created successfully.")
 
+def clean_directories():
+    directories_to_clean = ['./documentation', os.getenv('LOG_DIRECTORY', './logs')]
+    for directory in directories_to_clean:
+        if os.path.exists(directory):
+            rmtree(directory)
+            print(f"Deleted directory {directory}")
+    if os.path.exists('comments.py'):
+        os.remove('comments.py')
+        print("Deleted comments.py")
+    if os.path.exists('.env'):
+        os.remove('.env')
+        print("Deleted .env file")
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Setup script for comments.py')
+    parser.add_argument('-c', '--clean', action='store_true', help='Clean up directories, comments.py, and .env file')
+    parser.add_argument('-u', '--update', action='store_true', help='Update comments.py from GitHub')
+    return parser.parse_args()
+
 def main():
+    args = parse_arguments()
+
+    if args.clean:
+        print("Cleaning up...")
+        clean_directories()
+        return
+
     print("Starting setup script for comments.py...")
     check_python()
     install_packages()
+
+    if args.update:
+        print("Updating comments.py from GitHub...")
+        comments_py_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/release/comments.py"
+        download_file_from_github(comments_py_url, "comments.py")
+        return
+
     setup_env_file()
     create_directories()
 
@@ -74,7 +115,7 @@ def main():
 
     # Downloading the files
     download_file_from_github(comments_py_url, "comments.py")
-    download_file_from_github(documentation_url, "./documentation/comments_documentation.pdf")
+    download_file_from_github(documentation_url, "./documentation/Comments_Documentation.pdf")
 
     print("\nSetup completed successfully.")
 
