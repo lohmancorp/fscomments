@@ -2,7 +2,7 @@
 # setup.py is a script to setup comments.py
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.04
+# Version: 1.05
 ################################################################################
 
 import os
