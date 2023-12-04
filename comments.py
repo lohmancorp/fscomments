@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.04
+# Version: 1.05
 ################################################################################
 
 # Import necessary libraries
@@ -14,6 +14,7 @@ import requests
 import base64
 import json
 import time
+import signal
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -22,7 +23,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.04'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.05'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
@@ -42,6 +43,7 @@ tickets_with_many_comments = []
 total_api_response_time = 0
 api_calls_made = 0
 skipped_tickets = 0
+interrupted = False
 
 # Argument Parsing - Adjusted
 def parse_arguments():
@@ -55,6 +57,24 @@ def parse_arguments():
     parser.add_argument('-l', '--log-level', choices=['WARNING', 'DEBUG'], default='WARNING', help='Logging level')
     parser.add_argument('-v', '--version', default=SCRIPT_VERSION, help='Version of the script to use')
     return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_arguments()
+
+    # Check if the input file exists
+    if not os.path.isfile(args.input_file):
+        print(f"The file {args.input_file} does not exist or the path used is incorrect.")
+        print("Please check that the file exists and has the correct path and try again.")
+        exit(1)
+        
+# Signal handler for handling Ctrl+C
+def signal_handler(signum, frame):
+    global interrupted
+    interrupted = True
+    print("\nInterrupt received, finishing current ticket and exiting...")
+
+# Register the signal handler
+signal.signal(signal.SIGINT, signal_handler)
 
 # Logging Configuration with Iteration
 def setup_logging(args):
@@ -227,11 +247,15 @@ def process_notes(fsid, ticket, headers, args):
 
 # Main processing function for tickets - Adjusted for --number-to-process
 def process_tickets(args, tickets_data):
-    global successful_tickets, errored_tickets, tickets_with_many_comments, original_time_wait, skipped_tickets
+    global successful_tickets, errored_tickets, tickets_with_many_comments, original_time_wait, skipped_tickets, interrupted
     headers = generate_auth_header(API_KEY)
     processed_tickets = set()
 
     for ticket in tickets_data:
+        if interrupted:
+            print("Exiting after current ticket.")
+            break
+
         fdid = ticket['helpdesk_ticket']['display_id']
         filter_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/filter?query=\"fdid:{fdid}\""
         response = make_api_request("GET", filter_url, headers)
@@ -264,6 +288,10 @@ def process_tickets(args, tickets_data):
             logging.info(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
             print(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
             skipped_tickets += 1
+
+        if interrupted:
+            print("Exiting after current ticket.")
+            break
 
         time.sleep(args.time_wait / 1000)  # Wait time between processing each ticket
 
