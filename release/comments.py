@@ -15,6 +15,7 @@ import base64
 import json
 import time
 import signal
+import sys
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -174,6 +175,21 @@ def make_api_request(method, url, headers, data=None, retries=2):
         logging.error(f"API request failed: {e}")
         raise
 
+# Function to show a progress bar in the UI of the shell to monitor progress.
+def show_progress_bar(current, total, bar_length=50):
+    """
+    Display a progress bar.
+    :param current: Current progress (number of tickets processed).
+    :param total: Total items to process (total number of tickets).
+    :param bar_length: Length of the progress bar in characters.
+    """
+    progress = float(current) / total
+    arrow = '-' * int(round(progress * bar_length) - 1) + '>'
+    spaces = ' ' * (bar_length - len(arrow))
+
+    sys.stdout.write("\rProgress: [{0}] {1}%".format(arrow + spaces, int(round(progress * 100))))
+    sys.stdout.flush()
+
 
 # Function to check if comments exist for a ticket
 def check_comments_exist(fsid, headers, args):
@@ -254,10 +270,16 @@ def process_tickets(args, tickets_data):
     # Limit the number of tickets to process if specified
     tickets_to_process = tickets_data[:args.number_to_process] if args.number_to_process else tickets_data
 
+    total_tickets_to_process = len(tickets_to_process)
+    current_ticket_count = 0
+
     for ticket in tickets_to_process:
         if interrupted:
-            print("Exiting after current ticket.")
+            print("\nExiting after current ticket.")
             break
+
+        current_ticket_count += 1
+        show_progress_bar(current_ticket_count, total_tickets_to_process)
 
         fdid = ticket['helpdesk_ticket']['display_id']
         filter_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/filter?query=\"fdid:{fdid}\""
@@ -280,7 +302,6 @@ def process_tickets(args, tickets_data):
         logging.info(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
         print(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
 
-        # Check for comments and specific activity
         conversations = get_conversations(fsid, headers, args)
         actor_involved = check_activity(fsid, headers, args, conversations)
 
@@ -293,13 +314,12 @@ def process_tickets(args, tickets_data):
             skipped_tickets += 1
 
         if interrupted:
-            print("Exiting after current ticket.")
+            print("\nExiting after current ticket.")
             break
 
         time.sleep(args.time_wait / 1000)  # Wait time between processing each ticket
 
     successful_tickets = len(processed_tickets)  # Count unique successful tickets
-
 
 def format_timedelta(td):
     total_seconds = int(td.total_seconds())
