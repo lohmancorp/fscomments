@@ -71,7 +71,7 @@ if __name__ == "__main__":
 def signal_handler(signum, frame):
     global interrupted
     interrupted = True
-    print("\nInterrupt received, finishing current ticket and exiting...")
+    print("\nInterrupt received, finishing current ticket and exiting... \n\n")
 
 # Register the signal handler
 signal.signal(signal.SIGINT, signal_handler)
