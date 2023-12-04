@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.01
+# Version: 1.04
 ################################################################################
 
 # Import necessary libraries
@@ -22,7 +22,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.01'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.04'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
@@ -41,6 +41,7 @@ errored_tickets = []
 tickets_with_many_comments = []
 total_api_response_time = 0
 api_calls_made = 0
+skipped_tickets = 0
 
 # Argument Parsing - Adjusted
 def parse_arguments():
@@ -59,8 +60,7 @@ def parse_arguments():
 def setup_logging(args):
     today = datetime.now().strftime("%Y-%m-%d")
     input_filename = os.path.basename(args.input_file).split('.')[0]
-    
-    # Iterating to find a log file name that doesn't exist yet
+
     iteration = 1
     while True:
         log_filename = f"{today}-{input_filename}_{iteration}.log"
@@ -69,8 +69,14 @@ def setup_logging(args):
             break
         iteration += 1
 
+    # Set the baseline logging level to INFO
     logging.basicConfig(filename=full_log_path, filemode='a',
-                        level=getattr(logging, args.log_level.upper()), format='%(asctime)s - %(levelname)s - %(message)s')
+                        level=logging.INFO, 
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # If the user's selected log level is DEBUG, adjust logging level accordingly
+    if args.log_level.upper() == 'DEBUG':
+        logging.getLogger().setLevel(logging.DEBUG)
 
 # Function to read the input JSON file
 def read_input_file(file_path):
@@ -85,7 +91,9 @@ def read_input_file(file_path):
 def estimate_total_run_time(tickets_data):
     total_comments = sum(len(ticket['helpdesk_ticket']['notes']) for ticket in tickets_data)
     total_time_seconds = total_comments  # 1 second per comment
-    return str(timedelta(seconds=total_time_seconds))
+    hours, remainder = divmod(total_time_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {seconds}s"
 
 # User Confirmation to Proceed
 def user_confirmation(message):
@@ -112,21 +120,40 @@ def check_and_adjust_rate_limit(response, args):
     else:
         args.time_wait = original_time_wait  # Resetting to original time wait
 
-# Function to handle API requests with retries for timeouts
+# Function to handle API requests with retries for timeouts and handle specific error codes
 def make_api_request(method, url, headers, data=None, retries=2):
     try:
         response = requests.request(method, url, headers=headers, json=data)
-        response.raise_for_status()  # Will raise an HTTPError for bad requests (4xx or 5xx)
+        if response.status_code == 403:  # Handling 403 Forbidden Error
+            logging.error(f"403 Forbidden error encountered. URL: {url} Method: {method}")
+            print("It looks like FreshWorks doesn't like what you were doing and the user was locked.")
+            print("Please check in FreshService that the user who your API KEY corresponds to is not locked.")
+            print("https://support.cloudblue.com/agents")
+            exit(1)
+        elif response.status_code == 401:  # Handling 401 Unauthorized Error
+            logging.error(f"401 Unauthorized error encountered. URL: {url} Method: {method}")
+            print("It looks like the API KEY you provided has a problem.")
+            print("Follow these instructions to make sure you are getting the correct API KEY:")
+            print("https://support.freshservice.com/en/support/solutions/articles/50000000306-where-do-i-find-my-api-key-")
+            print("Once you have the correct API KEY, open the .env file located in the root folder of the script to update the value.")
+            exit(1)
+        elif response.status_code == 429:  # Handling 429 Too Many Requests Error
+            logging.error(f"429 Too Many Requests error encountered. URL: {url} Method: {method}")
+            print("It looks like you exceeded the API rate limit.")
+            print("Go get a coffee, check your user isn't locked, and try again.")
+            exit(1)
+        response.raise_for_status()
         return response
     except requests.exceptions.Timeout:
         if retries > 0:
-            time.sleep(2)  # Waiting for 2 seconds before retrying
+            time.sleep(2)
             return make_api_request(method, url, headers, data, retries - 1)
         else:
             raise
     except requests.exceptions.RequestException as e:
         logging.error(f"API request failed: {e}")
         raise
+
 
 # Function to check if comments exist for a ticket
 def check_comments_exist(fsid, headers, args):
@@ -137,14 +164,24 @@ def check_comments_exist(fsid, headers, args):
     conversations = response.json().get('conversations', [])
     return len(conversations) == 0
 
-# Function to check for specific activity on a ticket
-def check_activity(fsid, headers, args):
+# Function to check for specific activity (public note added) on a ticket
+def check_activity(fsid, headers, args, conversations):
     url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/{fsid}/activities"
     response = make_api_request("GET", url, headers)
     check_and_adjust_rate_limit(response, args)
 
     activities = response.json().get('activities', [])
-    return any(activity['actor']['id'] == args.actor for activity in activities)
+    # Check if actor added a public or private note and if it exists in conversations
+    actor_notes = [act for act in activities if act['actor']['id'] == args.actor and ("added a public note" in act['content'] or "added a private note" in act['content'])]
+    # Return True if actor added a note and it's not in conversations
+    return any(act for act in actor_notes if not any(conv for conv in conversations if conv['created_at'] == act['created_at']))
+
+# Function to get conversations for a ticket
+def get_conversations(fsid, headers, args):
+    url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/{fsid}/conversations"
+    response = make_api_request("GET", url, headers)
+    check_and_adjust_rate_limit(response, args)
+    return response.json().get('conversations', [])
 
 # Function to process and post notes to FreshService - Revised for tracking and logging
 def process_notes(fsid, ticket, headers, args):
@@ -161,8 +198,12 @@ def process_notes(fsid, ticket, headers, args):
         support_email = note.get('support_email', '')
         body_html = note.get('body_html', '')
 
-        # Prepend created_at, support_email, and body_html
-        note_content = f"{created_at} <br>{support_email} <br>{body_html}"
+        # Prepare the note content
+        note_content = created_at
+        if support_email and support_email.lower() != "none":
+            note_content += f" <br>{support_email}"
+        note_content += f" <br> <br>{body_html}"
+        
         payload = {"body": note_content, "private": note.get('private', False)}
         post_note_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/{fsid}/notes"
 
@@ -180,17 +221,18 @@ def process_notes(fsid, ticket, headers, args):
 
         time.sleep(args.time_wait / 1000)  # Wait between posting each note
 
+    # Log completion of updating the ticket
+    logging.info(f"Completed updating ticket FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid}")
+    print(f"Completed updating ticket FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid}")
+
 # Main processing function for tickets - Adjusted for --number-to-process
 def process_tickets(args, tickets_data):
+    global successful_tickets, errored_tickets, tickets_with_many_comments, original_time_wait, skipped_tickets
     headers = generate_auth_header(API_KEY)
-    processed_count = 0
+    processed_tickets = set()
 
     for ticket in tickets_data:
-        if args.number_to_process and processed_count >= args.number_to_process:
-            break
-
         fdid = ticket['helpdesk_ticket']['display_id']
-        # Step 6a: Find the ticket in FreshService using display_id
         filter_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/filter?query=\"fdid:{fdid}\""
         response = make_api_request("GET", filter_url, headers)
         check_and_adjust_rate_limit(response, args)
@@ -198,36 +240,59 @@ def process_tickets(args, tickets_data):
         tickets_response = response.json()
         total_found = tickets_response['total']
 
-        # Handle different cases based on the total tickets found
         if total_found == 0:
-            logging.error(f"fdid: {fdid} not found in Fresh Service")
+            logging.error(f"FDID: {fdid} not found in Fresh Service")
+            errored_tickets.append(f"FDID: {fdid} not found in Fresh Service")
+            continue
         elif total_found > 1:
-            logging.error(f"Multiple Fresh Service duplicate tickets for fdid: {fdid}")
+            logging.error(f"Multiple Fresh Service duplicate tickets for FDID: {fdid}")
+            errored_tickets.append(f"Multiple Fresh Service duplicate tickets for FDID: {fdid}")
+            continue
+
+        fsid = tickets_response['tickets'][0]['id']
+        logging.info(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
+        print(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
+
+        # Check for comments and specific activity
+        conversations = get_conversations(fsid, headers, args)
+        actor_involved = check_activity(fsid, headers, args, conversations)
+
+        if not conversations or (actor_involved and not any(conv['user_id'] == args.actor for conv in conversations)):
+            process_notes(fsid, ticket, headers, args)
+            processed_tickets.add(fsid)
         else:
-            fsid = tickets_response['tickets'][0]['id']
-            logging.info(f"Starting to update ticket fdid: {fdid}, fsid: {fsid}")
+            logging.info(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
+            print(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Conditions not met for adding comments.")
+            skipped_tickets += 1
 
-            # Check for existing comments and specific activity
-            if check_comments_exist(fsid, headers, args) and check_activity(fsid, headers, args):
-                process_notes(fsid, ticket, headers, args)
-            else:
-                logging.info(f"Conditions not met for FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid}")
-
-        processed_count += 1
         time.sleep(args.time_wait / 1000)  # Wait time between processing each ticket
+
+    successful_tickets = len(processed_tickets)  # Count unique successful tickets
+
+def format_timedelta(td):
+    total_seconds = int(td.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {seconds}s"
+
 
 # Final summary and logging - Updated
 def finalize_script_execution(args, tickets_data):
-    global start_time, successful_tickets, errored_tickets, tickets_with_many_comments, total_api_response_time, api_calls_made
+    global start_time, successful_tickets, skipped_tickets, errored_tickets, tickets_with_many_comments, total_api_response_time, api_calls_made
+
     total_runtime = datetime.now() - start_time
+    total_runtime_formatted = format_timedelta(total_runtime)
     avg_processing_time = total_runtime / len(tickets_data) if tickets_data else timedelta(0)
+    avg_processing_time_formatted = format_timedelta(avg_processing_time)
     avg_api_response_time = (total_api_response_time / api_calls_made) * 1000 if api_calls_made else 0
+    avg_api_response_time_rounded = round(avg_api_response_time, 2)
 
     final_summary_msg = (f"Script Execution Completed\n"
-                         f"Total Running Time: {str(total_runtime)}\n"
-                         f"Average Processing Time per Ticket: {str(avg_processing_time)}\n"
-                         f"Average API Response Time: {avg_api_response_time} milliseconds\n"
+                         f"Total Running Time: {total_runtime_formatted}\n"
+                         f"Average Processing Time per Ticket: {avg_processing_time_formatted}\n"
+                         f"Average API Response Time: {avg_api_response_time_rounded} milliseconds\n"
                          f"Total Successful Tickets: {successful_tickets}\n"
+                         f"Total Skipped Tickets: {skipped_tickets}\n"
                          f"Errored Tickets: {errored_tickets}\n"
                          f"Tickets w/ 50+ Comments: {tickets_with_many_comments}")
     print(final_summary_msg)
@@ -251,17 +316,20 @@ def main():
     total_run_time_estimate = estimate_total_run_time(tickets_data)
 
     # Display and log total tickets, comments, estimated running time, script name, version, and start time
-    total_info_msg = (f"Script Name: {SCRIPT_NAME}\n"
-                      f"Script Version: {SCRIPT_VERSION}\n"
-                      f"Script Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                      f"Total Tickets: {total_tickets}\n"
-                      f"Total Comments: {total_comments}\n"
-                      f"Estimated Total Running Time: {total_run_time_estimate}")
+    total_info_msg = (f"STARTING SCRIPT \n"
+                  f"Script Name: {SCRIPT_NAME}\n"    
+                  f"Script Version: {SCRIPT_VERSION}\n"
+                  f"Script Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                  f"Total Tickets: {total_tickets}\n"
+                  f"Total Comments: {total_comments}\n"
+                  f"Estimated Total Running Time: {total_run_time_estimate}")
+
     print(total_info_msg)
     logging.info(total_info_msg)
 
     if not user_confirmation("Do you want to proceed? (y/n): "):
         logging.info("User opted not to proceed. Exiting script.")
+        print("User opted not to proceed. Exiting script.")
         return
 
     process_tickets(args, tickets_data)
