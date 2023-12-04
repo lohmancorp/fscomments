@@ -5,25 +5,36 @@
 # Version: 1.05
 ################################################################################
 
-import os
-import requests
 import subprocess
 import sys
+import os
+import shutil
 import argparse
-from pathlib import Path
+
+# Function to check and install required packages
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+def check_and_install_packages():
+    # Check and install 'requests' and 'python-dotenv' if not already installed
+    for package in ["requests", "python-dotenv"]:
+        try:
+            __import__(package)
+        except ImportError:
+            install(package)
+
+# Import dotenv after ensuring it is installed
+def import_dotenv():
+    global load_dotenv
+    from dotenv import load_dotenv
 
 def check_python():
     if sys.version_info < (3, 6):
         raise Exception("Python 3.6 or higher is required. Please install it.")
     print("Python version check passed.")
 
-def install_packages():
-    required_packages = ["requests", "python-dotenv"]
-    for package in required_packages:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-    print("Required packages installed successfully.")
-
 def download_file_from_github(file_url, destination):
+    import requests
     response = requests.get(file_url)
     if response.status_code == 200:
         with open(destination, 'wb') as file:
@@ -48,57 +59,65 @@ def setup_env_file():
         with open('.env', 'w') as file:
             for key, value in env_variables.items():
                 file.write(f"{key}=\"{value}\"\n")
-                print(f"{key} set to {value}.")
+            print("Environment variables set successfully.")
     else:
         print(".env file already exists.")
 
-def create_directories(log_directory):
+def create_directories():
+    load_dotenv()
+
+    log_directory = os.getenv('LOG_DIRECTORY', './logs')
     directories = ['./documentation', log_directory]
+
     for directory in directories:
         if not os.path.exists(directory):
             os.makedirs(directory)
             print(f"Directory {directory} created.")
     print("All necessary directories created successfully.")
 
-def clean_directories():
-    current_directory = Path('.')
-    print("Cleaning up...")
-    for path in current_directory.iterdir():
-        if path.is_dir():
-            subprocess.call(['rm', '-rf', str(path)])
-            print(f"Deleted directory {path}")
-        elif path.name in ['comments.py', '.env']:
-            path.unlink()
-            print(f"Deleted {path.name}")
-
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Setup script for comments.py')
-    parser.add_argument('-c', '--clean', action='store_true', help='Clean up directories, comments.py, and .env file')
-    parser.add_argument('-u', '--update', action='store_true', help='Update comments.py from GitHub')
+    parser.add_argument('-c', '--clean', action='store_true', help='Clean up existing setup')
+    parser.add_argument('-u', '--update', action='store_true', help='Update comments.py script')
     return parser.parse_args()
+
+def clean_setup():
+    print("Cleaning up...")
+    if os.path.exists('.env'):
+        os.remove('.env')
+    if os.path.exists('comments.py'):
+        os.remove('comments.py')
+    for root, dirs, files in os.walk('.', topdown=False):
+        for name in dirs:
+            shutil.rmtree(os.path.join(root, name))
+
+def update_comments_script():
+    print("Upgrading comments.py...")
+    download_file_from_github("https://raw.githubusercontent.com/lohmancorp/fscomments/main/release/comments.py", "comments.py")
 
 def main():
     args = parse_arguments()
-    comments_py_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/release/comments.py"
-    documentation_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/documentation/Comments_Documentation.pdf"
-
     if args.clean:
-        clean_directories()
+        clean_setup()
         return
-
-    check_python()
-    install_packages()
 
     if args.update:
-        print("Upgrading comments.py...")
-        download_file_from_github(comments_py_url, "comments.py")
+        check_and_install_packages()
+        update_comments_script()
         return
 
+    print("Starting setup script for comments.py...")
+    check_python()
+    check_and_install_packages()
+    import_dotenv()  # Importing dotenv after ensuring it's installed
     setup_env_file()
-    create_directories(os.getenv('LOG_DIRECTORY', './logs'))
+    create_directories()
+
+    # URLs for the raw content on GitHub
+    documentation_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/documentation/Comments_Documentation.pdf"
 
     # Downloading the files
-    download_file_from_github(comments_py_url, "comments.py")
+    download_file_from_github("https://raw.githubusercontent.com/lohmancorp/fscomments/main/release/comments.py", "comments.py")
     download_file_from_github(documentation_url, "./documentation/Comments_Documentation.pdf")
 
     print("\nSetup completed successfully.")
