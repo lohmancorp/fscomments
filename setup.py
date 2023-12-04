@@ -69,12 +69,12 @@ def main():
     create_directories()
 
     # URLs for the raw content on GitHub
-    comments_py_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/comments.py"
-    documentation_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/comments_script.pdf"
+    comments_py_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/release/comments.py"
+    documentation_url = "https://raw.githubusercontent.com/lohmancorp/fscomments/main/documentation/Comments_Documentation.pdf"
 
     # Downloading the files
     download_file_from_github(comments_py_url, "comments.py")
-    download_file_from_github(documentation_url, "./documentation/comments_script.pdf")
+    download_file_from_github(documentation_url, "./documentation/comments_documentation.pdf")
 
     print("\nSetup completed successfully.")
 
