@@ -251,7 +251,10 @@ def process_tickets(args, tickets_data):
     headers = generate_auth_header(API_KEY)
     processed_tickets = set()
 
-    for ticket in tickets_data:
+    # Limit the number of tickets to process if specified
+    tickets_to_process = tickets_data[:args.number_to_process] if args.number_to_process else tickets_data
+
+    for ticket in tickets_to_process:
         if interrupted:
             print("Exiting after current ticket.")
             break
@@ -296,6 +299,7 @@ def process_tickets(args, tickets_data):
         time.sleep(args.time_wait / 1000)  # Wait time between processing each ticket
 
     successful_tickets = len(processed_tickets)  # Count unique successful tickets
+
 
 def format_timedelta(td):
     total_seconds = int(td.total_seconds())
