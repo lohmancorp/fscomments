@@ -109,8 +109,10 @@ def read_input_file(file_path):
         raise
 
 # Function to estimate total script running time
-def estimate_total_run_time(tickets_data):
-    total_comments = sum(len(ticket['helpdesk_ticket']['notes']) for ticket in tickets_data)
+# Function to estimate total script running time
+def estimate_total_run_time(tickets_data, number_to_process):
+    limited_tickets = tickets_data[:number_to_process] if number_to_process else tickets_data
+    total_comments = sum(len(ticket['helpdesk_ticket']['notes']) for ticket in limited_tickets)
     total_time_seconds = total_comments  # 1 second per comment
     hours, remainder = divmod(total_time_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -334,13 +336,20 @@ def finalize_script_execution(args, tickets_data):
     total_runtime_formatted = format_timedelta(total_runtime)
     avg_processing_time = total_runtime / len(tickets_data) if tickets_data else timedelta(0)
     avg_processing_time_formatted = format_timedelta(avg_processing_time)
-    avg_api_response_time = (total_api_response_time / api_calls_made) * 1000 if api_calls_made else 0
-    avg_api_response_time_rounded = round(avg_api_response_time, 2)
+    avg_api_response_time = (total_api_response_time / api_calls_made) if api_calls_made else 0
+
+    # Determine the unit for average API response time
+    if avg_api_response_time >= 1000:
+        avg_api_response_time_in_seconds = round(avg_api_response_time / 1000, 2)
+        avg_api_response_time_str = f"{avg_api_response_time_in_seconds} seconds"
+    else:
+        avg_api_response_time_rounded = round(avg_api_response_time, 2)
+        avg_api_response_time_str = f"{avg_api_response_time_rounded} milliseconds"
 
     final_summary_msg = (f"Script Execution Completed\n"
                          f"Total Running Time: {total_runtime_formatted}\n"
                          f"Average Processing Time per Ticket: {avg_processing_time_formatted}\n"
-                         f"Average API Response Time: {avg_api_response_time_rounded} milliseconds\n"
+                         f"Average API Response Time: {avg_api_response_time_str}\n"
                          f"Total Successful Tickets: {successful_tickets}\n"
                          f"Total Skipped Tickets: {skipped_tickets}\n"
                          f"Errored Tickets: {errored_tickets}\n"
@@ -361,18 +370,18 @@ def main():
     original_time_wait = args.time_wait
     
     tickets_data = read_input_file(args.input_file)
-    total_tickets = len(tickets_data)
-    total_comments = sum(len(ticket['helpdesk_ticket']['notes']) for ticket in tickets_data)
-    total_run_time_estimate = estimate_total_run_time(tickets_data)
+    total_tickets = len(tickets_data[:args.number_to_process]) if args.number_to_process else len(tickets_data)
+    total_comments = sum(len(ticket['helpdesk_ticket']['notes']) for ticket in tickets_data[:args.number_to_process]) if args.number_to_process else sum(len(ticket['helpdesk_ticket']['notes']) for ticket in tickets_data)
+    total_run_time_estimate = estimate_total_run_time(tickets_data, args.number_to_process)
 
     # Display and log total tickets, comments, estimated running time, script name, version, and start time
     total_info_msg = (f"STARTING SCRIPT \n"
-                  f"Script Name: {SCRIPT_NAME}\n"    
-                  f"Script Version: {SCRIPT_VERSION}\n"
-                  f"Script Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                  f"Total Tickets: {total_tickets}\n"
-                  f"Total Comments: {total_comments}\n"
-                  f"Estimated Total Running Time: {total_run_time_estimate}")
+                      f"Script Name: {SCRIPT_NAME}\n"    
+                      f"Script Version: {SCRIPT_VERSION}\n"
+                      f"Script Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                      f"Total Tickets: {total_tickets}\n"
+                      f"Total Comments: {total_comments}\n"
+                      f"Estimated Total Running Time: {total_run_time_estimate}")
 
     print(total_info_msg)
     logging.info(total_info_msg)
@@ -389,3 +398,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
