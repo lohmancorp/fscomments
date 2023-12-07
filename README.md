@@ -3,7 +3,7 @@ Script that will re-import comments to tickets where comments have been deleted.
 
 Overview
 
-    Version: 1.08
+    Version: 1.09
     Author: Taylor Giddens (taylor.giddens@ingrammicro.com)
 
 Prerequisites and Installation
