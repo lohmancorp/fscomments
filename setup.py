@@ -2,7 +2,7 @@
 # setup.py
 # A script to setup and manage the comments.py environment.
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.08
+# Version: 1.09
 ################################################################################
 
 
