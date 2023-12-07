@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.08
+# Version: 1.09
 ################################################################################
 
 # Import necessary libraries
@@ -24,7 +24,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.08'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.09'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
@@ -53,8 +53,10 @@ def parse_arguments():
     parser.add_argument('-m', '--mode', required=True, choices=['staging', 'production'], help='API mode: staging or production')
     parser.add_argument('-t', '--time-wait', type=int, required=True, help='Time in milliseconds to wait between API calls')
     parser.add_argument('-b', '--bigcomments-support', action='store_true', help='Support tickets with 50 or more comments')
-    parser.add_argument('-a', '--actor', type=int, required=True, help='Actor ID for checking specific activity')
+    parser.add_argument('-a1', '--actor1', type=int, required=True, help='Primary Actor ID for checking specific activity')
+    parser.add_argument('-a2', '--actor2', type=int, required=False, help='Secondary Actor ID for skipping already updated tickets')
     parser.add_argument('-n', '--number-to-process', type=int, default=0, help='Number of tickets to process, 0 for all')
+    parser.add_argument('-d', '--dryrun', action='store_true', help='Dry run mode (no actual changes will be made)')
     parser.add_argument('-l', '--log-level', choices=['WARNING', 'DEBUG'], default='WARNING', help='Logging level')
     parser.add_argument('-v', '--version', default=SCRIPT_VERSION, help='Version of the script to use')
     return parser.parse_args()
@@ -203,16 +205,20 @@ def check_comments_exist(fsid, headers, args):
     return len(conversations) == 0
 
 # Function to check for specific activity (public note added) on a ticket
-def check_activity(fsid, headers, args, conversations):
+def check_activity(fsid, headers, actor1, conversations):
     url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/{fsid}/activities"
     response = make_api_request("GET", url, headers)
     check_and_adjust_rate_limit(response, args)
 
     activities = response.json().get('activities', [])
-    # Check if actor added a public or private note and if it exists in conversations
-    actor_notes = [act for act in activities if act['actor']['id'] == args.actor and ("added a public note" in act['content'] or "added a private note" in act['content'])]
-    # Return True if actor added a note and it's not in conversations
-    return any(act for act in actor_notes if not any(conv for conv in conversations if conv['created_at'] == act['created_at']))
+    # Extract IDs of notes added by actor1
+    actor1_notes_ids = {act['id'] for act in activities if act['actor']['id'] == actor1 and ("added a public note" in act['content'] or "added a private note" in act['content'])}
+    
+    # Extract IDs of conversations involving actor1
+    actor1_conv_ids = {conv['id'] for conv in conversations if conv['user_id'] == actor1}
+    
+    # Check if there are notes added by actor1 that are not present in conversations
+    return not actor1_notes_ids.issubset(actor1_conv_ids)
 
 # Function to get conversations for a ticket
 def get_conversations(fsid, headers, args):
@@ -229,6 +235,7 @@ def process_notes(fsid, ticket, headers, args):
     if not args.bigcomments_support and len(notes) >= 50:
         tickets_with_many_comments.append(fsid)
         logging.warning(f"Skipping ticket FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} due to 50 or more comments.")
+        print(f"Skipping ticket FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} due to 50 or more comments.")
         return
 
     for note in notes:
@@ -256,6 +263,7 @@ def process_notes(fsid, ticket, headers, args):
         except Exception as e:
             errored_tickets.append((response.status_code, fsid))
             logging.error(f"Failed to post note for FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid}: {e}")
+            print(f"Failed to post note for FDID {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid}: {e}")
 
         time.sleep(args.time_wait / 1000)  # Wait between posting each note
 
@@ -281,7 +289,10 @@ def process_tickets(args, tickets_data):
             break
 
         fdid = ticket['helpdesk_ticket']['display_id']
-        filter_url = FRESH_SERVICE_ENDPOINTS[args.mode] + f"/tickets/filter?query=\"fdid:{fdid}\""
+        base_url = FRESH_SERVICE_ENDPOINTS[args.mode].rstrip('/')
+        query = f'"fdid:{fdid}%20AND%20ticket_type:%27Incident%20or%20Problem%27"'
+        filter_url = f"{base_url}/tickets/filter?query={query}"
+
         response = make_api_request("GET", filter_url, headers)
         check_and_adjust_rate_limit(response, args)
 
@@ -296,13 +307,17 @@ def process_tickets(args, tickets_data):
             errored_tickets.append(f"Multiple Fresh Service duplicate tickets for FDID: {fdid}")
         else:
             fsid = tickets_response['tickets'][0]['id']
-            logging.info(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
-            print(f"Starting to update ticket FDID: {fdid}, FSID: {fsid}")
-
             conversations = get_conversations(fsid, headers, args)
-            actor_involved = check_activity(fsid, headers, args, conversations)
+            actor1_involved = check_activity(fsid, headers, args.actor1, conversations)
+            actor2_involved = args.actor2 and any(conv['user_id'] == args.actor2 for conv in conversations)
 
-            if not conversations or (actor_involved and not any(conv['user_id'] == args.actor for conv in conversations)):
+            if actor2_involved:
+                logging.info(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Already updated by actor2.")
+                print(f"Skipping FDID: {ticket['helpdesk_ticket']['display_id']}, FSID: {fsid} - Already updated by actor2.")
+                skipped_tickets += 1
+            elif args.dryrun:
+                print(f"Script is in dry run and fake processing of FDID {fdid} - FSID {fsid}")
+            elif not conversations or actor1_involved:
                 process_notes(fsid, ticket, headers, args)
                 processed_tickets.add(fsid)
             else:
@@ -398,4 +413,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
