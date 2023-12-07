@@ -3,7 +3,7 @@
 # from FreshDesk that were deleted after initial import was already completed.
 #
 # Author: Taylor Giddens - taylor.giddens@ingrammicro.com
-# Version: 1.09
+# Version: 1.09.1
 ################################################################################
 
 # Import necessary libraries
@@ -24,7 +24,7 @@ load_dotenv()
 
 # Script Variables:
 SCRIPT_NAME = 'comments.py'
-SCRIPT_VERSION = '1.09'  # Update as per versioning requirements
+SCRIPT_VERSION = '1.09.1'  # Update as per versioning requirements
 
 # Environment variables
 API_KEY = os.getenv('API_KEY')
@@ -211,14 +211,15 @@ def check_activity(fsid, headers, actor1, conversations):
     check_and_adjust_rate_limit(response, args)
 
     activities = response.json().get('activities', [])
-    # Extract IDs of notes added by actor1
-    actor1_notes_ids = {act['id'] for act in activities if act['actor']['id'] == actor1 and ("added a public note" in act['content'] or "added a private note" in act['content'])}
+    # Check if actor1 added a public or private note
+    actor1_notes = [act for act in activities if 'actor' in act and act['actor'].get('id') == actor1 and 
+                    ("added a public note" in act.get('content', '') or "added a private note" in act.get('content', ''))]
     
-    # Extract IDs of conversations involving actor1
-    actor1_conv_ids = {conv['id'] for conv in conversations if conv['user_id'] == actor1}
-    
-    # Check if there are notes added by actor1 that are not present in conversations
-    return not actor1_notes_ids.issubset(actor1_conv_ids)
+    # Extract creation times of actor1's notes
+    actor1_notes_times = {act['created_at'] for act in actor1_notes}
+
+    # Check if any of actor1's notes are not in conversations
+    return not any(conv['created_at'] in actor1_notes_times for conv in conversations if conv.get('user_id') == actor1)
 
 # Function to get conversations for a ticket
 def get_conversations(fsid, headers, args):
